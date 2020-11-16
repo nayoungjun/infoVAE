@@ -40,7 +40,7 @@ def train(logdir, dataset, num_epoch, mc, num_latent, beta, gamma):
     writer = SummaryWriter(logdir)
     iteration = 0
 
-    zz = torch.randn(16, num_latent).to(device)
+    zz = 0.6 * torch.randn(16, num_latent).to(device)
 
     with trange(num_epoch) as loop:
         for epoch in loop:
@@ -75,6 +75,8 @@ def train(logdir, dataset, num_epoch, mc, num_latent, beta, gamma):
                     writer.add_image('images/reconstructions', tile_images(recon.detach()), global_step=iteration)
                     generated = model.decoder(zz).cpu()
                     writer.add_image('image/generated', tile_images(generated.detach()), global_step=iteration)
+
+                    writer.add_histogram("distribution/z", z.flatten().detach(), global_step=iteration)
 
                     torch.save(model.state_dict(), os.path.join(logdir, "model.pt"))
 

@@ -100,7 +100,7 @@ def ELBO(reconstruct_input, input, mean_vec, logvar_vec):
 
 def mmd(z, z_sample):
     def compute_kernel(z, z_sample):
-        kernel_input = (z.unsqueeze(1) - z_sample.unsqueeze(0)).pow(2).mean(2)
+        kernel_input = (z.unsqueeze(1) - z_sample.unsqueeze(0)).pow(2).mean(2) / z.shape[-1]
         return torch.exp(-kernel_input) # (x_size, y_size)
 
     zz = compute_kernel(z, z)
