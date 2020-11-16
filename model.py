@@ -8,30 +8,33 @@ class VAE(nn.Module):
     Encoder with one convolutional layer and two fully connected feedforward layers
     """
 
-    def __init__(self, conv1_channel, conv1_filter, pool1_filter, conv2_channel, conv2_filter,
-                 pool2_filter, conv3_channel, conv3_filter, num_fc1, num_mean, num_sd, num_fc2, out_size, input_size=32):
+    def __init__(self, mc, num_latent, input_size=32):
         """
         initialize layer
 
         Args:
-            num_channel: number of convolutional channels of the encoder
-            filter_size: size of each convolutional filters
+            mc: model complexity
+            num_latent: dimension of the latent space
             num_ff: number of units in fully-connected layer
         """
         super().__init__()
         self.input_size = input_size
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=conv1_channel, kernel_size=conv1_filter)
-        self.pool1 = nn.MaxPool2d(kernel_size=pool1_filter)
-        self.conv2 = nn.Conv2d(in_channels=conv1_channel, out_channels=conv2_channel, kernel_size=conv2_filter)
-        self.pool2 = nn.MaxPool2d(kernel_size=pool2_filter)
-        self.conv3 = nn.Conv2d(in_channels=conv2_channel, out_channels=conv3_channel, kernel_size=conv3_filter)
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=mc * 2, kernel_size=3,padding=1)
+        self.conv2 = nn.Conv2d(in_channels=mc * 2, out_channels=mc * 4, kernel_size=3,padding=1)
+        self.conv3 = nn.Conv2d(in_channels=mc * 4, out_channels=mc * 8, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(in_channels=mc * 8, out_channels=mc * 16, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv2d(in_channels=mc * 16, out_channels=mc * 32, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(kernel_size=2)
 
-        self.fc = nn.Linear(conv3_channel, num_fc1)
-        self.fc_mean = nn.Linear(num_fc1, num_mean)
-        self.fc_sd = nn.Linear(num_fc1, num_sd)
-        self.decoder_fc1 = nn.Linear(num_mean, num_fc1)
-        self.decoder_fc2 = nn.Linear(num_fc1, num_fc2)
-        self.decoder_fc3 = nn.Linear(num_fc2, out_size)
+        self.fc_mean = nn.Linear(mc * 32, num_latent)
+        self.fc_sd = nn.Linear(mc * 32, num_latent)
+
+        self.convt1 = nn.ConvTranspose2d(in_channels=num_latent, out_channels=mc * 16, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.convt2 = nn.ConvTranspose2d(in_channels=mc * 16, out_channels=mc * 8, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.convt3 = nn.ConvTranspose2d(in_channels=mc * 8, out_channels=mc * 4, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.convt4 = nn.ConvTranspose2d(in_channels=mc * 4, out_channels=mc * 2, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.convt5 = nn.ConvTranspose2d(in_channels=mc * 2, out_channels=3, kernel_size=3, stride=2, padding=1, output_padding=1)
+
 
     def encoder(self, input):
         """
@@ -43,18 +46,12 @@ class VAE(nn.Module):
             mean layer (1 x mean_size) and sd layer (1 x sd_size)
         """
 
-        out = self.conv1(input)
-        out = out.relu()
-        out = self.pool1(out)
-        out = self.conv2(out)
-        out = out.relu()
-        out = self.pool2(out)
-        out = self.conv3(out)
-        out = out.relu()
-        out = torch.squeeze(out)
+        out = self.pool(self.conv1(input).relu())
+        out = self.pool(self.conv2(out).relu())
+        out = self.pool(self.conv3(out).relu())
+        out = self.pool(self.conv4(out).relu())
+        out = torch.squeeze(self.pool(self.conv5(out).relu()))
 
-        out = self.fc(out)
-        out = out.relu()  # out should be a shape of 1 x num_fc
         out_mean = self.fc_mean(out)
         out_logvar = self.fc_sd(out)
         out_logvar = torch.exp(out_logvar)
@@ -76,17 +73,17 @@ class VAE(nn.Module):
         return z
 
     def decoder(self, z):
-        out = self.decoder_fc1(z)
-        out = out.relu()
-        out = self.decoder_fc2(out)
-        out = out.relu()
-        out = self.decoder_fc3(out)
-        out = torch.reshape(out, [-1, 3, self.input_size, self.input_size])
-        out = torch.sigmoid(out)
+
+        out = z.unsqueeze(-1).unsqueeze(-1) # shape = [Batch, num_latent, 1, 1]
+        out = self.convt1(out).relu()
+        out = self.convt2(out).relu()
+        out = self.convt3(out).relu()
+        out = self.convt4(out).relu()
+        out = self.convt5(out).sigmoid()
 
         return out
 
-    def forward(self, input, mean_size=4, sd_size=4):
+    def forward(self, input):
         mean_vec, logvar_vec = self.encoder(input)
         z = self.reparameterize(mean_vec, logvar_vec)
         recon = self.decoder(z)
@@ -96,7 +93,7 @@ class VAE(nn.Module):
 
 def ELBO(reconstruct_input, input, mean_vec, logvar_vec):
 
-    recon_loss = F.mse_loss(reconstruct_input, input, reduction='mean')
+    recon_loss = F.binary_cross_entropy(reconstruct_input, input, size_average=False)
     KL = -0.5 * torch.sum(1 + logvar_vec - mean_vec ** 2 - logvar_vec.exp())
 
     return recon_loss, KL

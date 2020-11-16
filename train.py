@@ -13,34 +13,34 @@ from torch.utils.tensorboard import SummaryWriter
 from model import VAE, ELBO, mmd
 from utils import cycle, tile_images
 
-## get CIFAR-10 dataset
-# trainset = CIFAR10('.', train=True, download=True, transform=transforms.ToTensor())
-# testset = CIFAR10('.', train=False, download=True, transform=transforms.ToTensor())
 
-transform = transforms.Compose([
-    lambda img: img.convert("RGB"),
-    transforms.Resize(32),
-    transforms.ToTensor()
-])
-trainset = MNIST('.', train=True, download=True, transform=transform)
-testset = MNIST('.', train=False, download=True, transform=transform)
+def train(logdir, dataset, num_epoch, mc, num_latent, beta, gamma):
+    ## get dataset
+    if dataset == "CIFAR10":
+        trainset = CIFAR10('.', train=True, download=True, transform=transforms.ToTensor())
+        testset = CIFAR10('.', train=False, download=True, transform=transforms.ToTensor())
+    elif dataset == "MNIST":
+        transform = transforms.Compose([
+            lambda img: img.convert("RGB"),
+            transforms.Resize(32),
+            transforms.ToTensor()
+        ])
+        trainset = MNIST('.', train=True, download=True, transform=transform)
+        testset = MNIST('.', train=False, download=True, transform=transform)
+    else:
+        raise RuntimeError(f"Unsupported dataset: {dataset}")
 
-## Make the dataset iterable
-train_loader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True)
-test_loader = torch.utils.data.DataLoader(testset, batch_size=128, shuffle=True)
-
-
-def train(logdir, num_epoch, conv1_channel, conv1_filter, pool1_filter, conv2_channel, conv2_filter,
-          pool2_filter, conv3_channel, conv3_filter, num_fc1, num_mean, num_sd, num_fc2, out_size, beta, gamma):
+    ## Make the dataset iterable
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=128, shuffle=True)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = VAE(conv1_channel, conv1_filter, pool1_filter, conv2_channel, conv2_filter,
-                pool2_filter, conv3_channel, conv3_filter, num_fc1, num_mean, num_sd, num_fc2, out_size).to(device)
+    model = VAE(mc, num_latent).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     writer = SummaryWriter(logdir)
     iteration = 0
 
-    z_samples = torch.randn(16, num_mean).to(device)
+    zz = torch.randn(16, num_latent).to(device)
 
     with trange(num_epoch) as loop:
         for epoch in loop:
@@ -73,7 +73,7 @@ def train(logdir, num_epoch, conv1_channel, conv1_filter, pool1_filter, conv2_ch
 
                     recon = model.forward(torch.stack([trainset[i][0] for i in range(16)]).to(device))[0].cpu()
                     writer.add_image('images/reconstructions', tile_images(recon.detach()), global_step=iteration)
-                    generated = model.decoder(z_samples).cpu()
+                    generated = model.decoder(zz).cpu()
                     writer.add_image('image/generated', tile_images(generated.detach()), global_step=iteration)
 
                     torch.save(model.state_dict(), os.path.join(logdir, "model.pt"))
@@ -88,20 +88,9 @@ if __name__ == '__main__':
     parser.add_argument('--logdir', type=str, default=os.path.join('runs', datetime.now().strftime('%y%m%d-%H%M%S')),
                         help='the directory to save the logs')
     parser.add_argument('--num_epoch', type=int, default=100)
+    parser.add_argument('--dataset', choices=("MNIST", "CIFAR10"), type=str, default="CIFAR10")
     parser.add_argument('--beta', type=int, default=1)
     parser.add_argument('--gamma', type=int, default=0)
-    parser.add_argument('--conv1_channel', type=int, default=16)
-    parser.add_argument('--conv1_filter', type=int, default=4)
-    parser.add_argument('--pool1_filter', type=int, default=2)
-    parser.add_argument('--conv2_channel', type=int, default=32)
-    parser.add_argument('--conv2_filter', type=int, default=6)
-    parser.add_argument('--pool2_filter', type=int, default=4)
-    parser.add_argument('--conv3_channel', type=int, default=64)
-    parser.add_argument('--conv3_filter', type=int, default=2)
-    parser.add_argument('--num_mean', type=int, default=8)
-    parser.add_argument('--num_sd', type=int, default=8)
-    parser.add_argument('--num_fc1', type=int, default=16)
-    parser.add_argument('--num_fc2', type=int, default=64)
-    parser.add_argument('--out_size', type=int, default=3072)
-
+    parser.add_argument('--mc', type=int, default=16)
+    parser.add_argument('--num_latent', type=int, default=8)
     train(**vars(parser.parse_args()))
